@@ -3,6 +3,8 @@ package it.valeriovaudi.filetos3demo;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -17,6 +19,9 @@ import org.springframework.integration.file.dsl.Files;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.integration.transformer.Transformer;
 import org.springframework.messaging.Message;
+import org.springframework.messaging.MessageHandler;
+import org.springframework.messaging.MessageHeaders;
+import org.springframework.messaging.MessagingException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.function.HandlerFunction;
 import org.springframework.web.servlet.function.RouterFunction;
@@ -33,15 +38,19 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.springframework.web.servlet.function.RouterFunctions.route;
 
 @EnableIntegration
 @SpringBootApplication
 public class FileToS3DemoApplication {
+
+    private final static Logger logger = LoggerFactory.getLogger(FileToS3DemoApplication.class);
 
     public static void main(String[] args) {
         SpringApplication.run(FileToS3DemoApplication.class, args);
@@ -53,12 +62,13 @@ public class FileToS3DemoApplication {
     }
 
     @Bean
-    public IntegrationFlow loadFromFile(@Value("${file.inbound-path:sample-data}") String inboundPath) {
+    public IntegrationFlow loadFromFile(@Value("${file.inbound-path:loading-folder}") String inboundPath) {
         return IntegrationFlow.from(Files.inboundAdapter(new File(inboundPath))
                                 .patternFilter("*.txt"),
                         e -> e.poller(Pollers.fixedDelay(1000)))
+                .enrichHeaders(headerEnricherSpec -> headerEnricherSpec.header("pipeline", "loadFromFile"))
+                .log(Object::toString)
                 .transform((Transformer) message -> {
-                    System.out.println(message);
                     File file = (File) message.getPayload();
                     FileWithStatistics fileWithStatistics = new FileWithStatistics(
                             null,
@@ -70,6 +80,14 @@ public class FileToS3DemoApplication {
                     return MessageBuilder.withPayload(fileWithStatistics)
                             .copyHeaders(message.getHeaders())
                             .build();
+                }).handle((GenericHandler<FileWithStatistics>) (payload, headers) -> {
+                    try {
+                        java.nio.file.Files.delete(Path.of(inboundPath, payload.name));
+                    } catch (IOException e) {
+                        logger.error(e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                    return payload;
                 })
                 .channel("publishSubscribeChannel")
                 .get();
@@ -86,9 +104,9 @@ public class FileToS3DemoApplication {
     @Bean
     public IntegrationFlow loadToS3(S3FileRepository repository) {
         return IntegrationFlow.from("publishSubscribeChannel")
+                .enrichHeaders(headerEnricherSpec -> headerEnricherSpec.header("pipeline", "loadToS3", true))
+                .log(Object::toString)
                 .handle((GenericHandler<FileWithStatistics>) (payload, headers) -> {
-                    System.out.println("loadToS3");
-                    System.out.println(payload);
                     repository.load(payload);
                     return payload.id;
                 })
@@ -98,28 +116,31 @@ public class FileToS3DemoApplication {
     @Bean
     public IntegrationFlow storeStatisticsToDB(FileStatisticsRepository repository) {
         return IntegrationFlow.from("publishSubscribeChannel")
-                .log()
-                .handle((GenericHandler<FileWithStatistics>) (payload, headers) -> {
-                    System.out.println("storeStatisticsToDB");
-                    System.out.println(payload);
+                .enrichHeaders(headerEnricherSpec -> headerEnricherSpec.header("pipeline", "storeStatisticsToDB", true))
+                .log(Object::toString)
+                .handle(message -> {
+                    FileWithStatistics payload = (FileWithStatistics) message.getPayload();
                     repository.save(payload);
-                    return payload.id;
-                })
-                .nullChannel();
+                }).get();
     }
 
     @Bean
-    public S3Client s3Client(AwsCredentialsProvider awsCredentialsProvider) {
+    public S3Client s3Client(
+            @Value("${s3.endpoint:http://127.0.0.1:4566}") URI endpoint,
+            AwsCredentialsProvider awsCredentialsProvider) {
         return S3Client.builder()
                 .credentialsProvider(awsCredentialsProvider)
                 .region(Region.US_EAST_1)
-                .endpointOverride(URI.create("http://127.0.0.1:4566"))
+                .endpointOverride(endpoint)
                 .build();
     }
 
     @Bean
-    public AwsCredentialsProvider awsCredentialsProvider() {
-        return StaticCredentialsProvider.create(AwsBasicCredentials.create("xxx", "xxx"));
+    public AwsCredentialsProvider awsCredentialsProvider(
+            @Value("${accessKeyId:xxx}") String accessKeyId,
+            @Value("${secretAccessKey:xxx}") String secretAccessKey
+    ) {
+        return StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKeyId, secretAccessKey));
     }
 }
 
