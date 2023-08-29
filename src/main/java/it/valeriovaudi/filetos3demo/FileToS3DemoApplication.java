@@ -12,20 +12,16 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.http.MediaType;
-import org.springframework.integration.config.EnableIntegration;
 import org.springframework.integration.core.GenericHandler;
-import org.springframework.integration.dsl.*;
+import org.springframework.integration.dsl.IntegrationFlow;
+import org.springframework.integration.dsl.MessageChannels;
+import org.springframework.integration.dsl.Pollers;
+import org.springframework.integration.dsl.PublishSubscribeChannelSpec;
 import org.springframework.integration.file.dsl.Files;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.integration.transformer.Transformer;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.MessageHandler;
-import org.springframework.messaging.MessageHeaders;
-import org.springframework.messaging.MessagingException;
 import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.function.HandlerFunction;
 import org.springframework.web.servlet.function.RouterFunction;
-import org.springframework.web.servlet.function.ServerRequest;
 import org.springframework.web.servlet.function.ServerResponse;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
@@ -42,11 +38,10 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
-import java.util.function.Consumer;
 
 import static org.springframework.web.servlet.function.RouterFunctions.route;
 
-@EnableIntegration
+//@EnableIntegration
 @SpringBootApplication
 public class FileToS3DemoApplication {
 
